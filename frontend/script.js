@@ -591,11 +591,11 @@ async function startTutoringSession(documentId) {
         // Show PDF viewer if we have the path
         if (data.pdf_file_path) {
             showPdfViewer(data.pdf_filename || 'Document', data.pdf_file_path);
-            if (data.current_section_index !== undefined) {
+            if (data.current_section_index !== undefined && data.current_section_title) {
                 highlightSection(
                     data.current_section_index,
                     data.current_section_title,
-                    '',
+                    data.section_text || '',
                     data.sections ? data.sections.length : 1
                 );
             }
@@ -603,6 +603,11 @@ async function startTutoringSession(documentId) {
         
         // Add AI's message
         addMessage('ai', data.message);
+        
+        // Display quiz if present in initial response
+        if (data.quiz_question && data.quiz_options) {
+            displayQuizQuestion(data.quiz_question, data.quiz_options);
+        }
         
         // Generate and play TTS
         if (data.audio_url) {
@@ -676,28 +681,19 @@ async function sendTutoringMessage(userMessage) {
         
         // Update section highlight if needed
         if (data.section_index !== undefined && data.section_title) {
-            // Get total sections from session state or estimate
+            // Get total sections - try to get from response or use estimate
+            const totalSections = data.sections ? data.sections.length : (data.section_index + 1);
             highlightSection(
                 data.section_index,
                 data.section_title,
                 data.section_text || '',
-                10 // Estimate, could be improved
+                totalSections
             );
         }
         
-        // Handle quiz questions
+        // Handle quiz questions - display them interactively
         if (data.quiz_question && data.quiz_options) {
-            const quizHtml = `
-                <div class="quiz-container">
-                    <div class="quiz-question">${data.quiz_question}</div>
-                    <div class="quiz-options">
-                        ${data.quiz_options.map((opt, idx) => 
-                            `<button class="quiz-option" onclick="selectQuizAnswer('${String.fromCharCode(65 + idx)}')">${String.fromCharCode(65 + idx)}) ${opt}</button>`
-                        ).join('')}
-                    </div>
-                </div>
-            `;
-            // Could add quiz UI here
+            displayQuizQuestion(data.quiz_question, data.quiz_options);
         }
         
         // Play audio
@@ -726,10 +722,62 @@ async function sendTutoringMessage(userMessage) {
     }
 }
 
+// Display quiz question in the conversation
+function displayQuizQuestion(question, options) {
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    const quizDiv = document.createElement('div');
+    quizDiv.className = 'quiz-container';
+    
+    // Create question element
+    const questionDiv = document.createElement('div');
+    questionDiv.className = 'quiz-question';
+    questionDiv.textContent = question;
+    
+    // Create options container
+    const optionsDiv = document.createElement('div');
+    optionsDiv.className = 'quiz-options';
+    
+    // Create option buttons
+    options.forEach((opt, idx) => {
+        const letter = String.fromCharCode(65 + idx); // A, B, C, D
+        const button = document.createElement('button');
+        button.className = 'quiz-option';
+        button.textContent = `${letter}) ${opt}`;
+        button.onclick = () => selectQuizAnswer(letter);
+        optionsDiv.appendChild(button);
+    });
+    
+    quizDiv.appendChild(questionDiv);
+    quizDiv.appendChild(optionsDiv);
+    
+    conversation.appendChild(quizDiv);
+    conversation.scrollTop = conversation.scrollHeight;
+}
+
 // Select quiz answer
 function selectQuizAnswer(answer) {
     if (tutoringSessionId) {
+        // Add user's answer selection to conversation
+        addMessage('user', `I choose answer ${answer}`);
+        
+        // Send the answer to the tutoring service
         sendTutoringMessage(answer);
+        
+        // Remove quiz buttons to prevent multiple clicks
+        const quizOptions = document.querySelectorAll('.quiz-option');
+        quizOptions.forEach(btn => {
+            btn.disabled = true;
+            if (btn.textContent.trim().startsWith(answer)) {
+                btn.style.background = 'rgba(100, 181, 246, 0.3)';
+                btn.style.borderColor = 'rgba(100, 181, 246, 0.8)';
+            }
+        });
     }
 }
 

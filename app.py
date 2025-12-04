@@ -590,7 +590,10 @@ def start_tutoring():
             'pdf_filename': filename,
             'sections': sections,
             'current_section_index': current_section_index,
-            'current_section_title': current_section.get('title', 'Section 1')
+            'current_section_title': current_section.get('title', 'Section 1'),
+            'section_text': current_section.get('text', '') if current_section else '',
+            'quiz_question': response.get('quiz_question'),
+            'quiz_options': response.get('quiz_options')
         }), 200
         
     except Exception as e:
@@ -635,6 +638,8 @@ def tutoring_chat():
             'state': response.get('state', 'unknown'),
             'section_index': current_section_index,
             'section_title': current_section.get('title', '') if current_section else '',
+            'section_text': current_section.get('text', '') if current_section else '',
+            'sections': sections,  # Include all sections for total count
             'quiz_question': response.get('quiz_question'),
             'quiz_options': response.get('quiz_options'),
             'user_answer': response.get('user_answer')
