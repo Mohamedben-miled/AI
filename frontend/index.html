@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assistant</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+    <!-- Glowing Dots Background -->
+    <div class="stars-container"></div>
+
+    <!-- Documents Panel (Top Left) -->
+    <div class="documents-panel" id="documents-panel" style="display: none;">
+        <h4>📚 Uploaded Documents</h4>
+        <div class="documents-list" id="documents-list">
+            <div class="document-item" style="color: rgba(255, 255, 255, 0.5); font-style: italic;">No documents yet</div>
+        </div>
+    </div>
+
+    <!-- KPI Dashboard (Top Right) -->
+    <div class="kpi-dashboard">
+        <div class="kpi-compact">
+            <div class="kpi-item-compact">
+                <span class="kpi-label-tiny">Msg</span>
+                <span class="kpi-value-tiny" id="kpi-messages">0</span>
+            </div>
+            <div class="kpi-item-compact">
+                <span class="kpi-label-tiny">Resp</span>
+                <span class="kpi-value-tiny" id="kpi-responses">0</span>
+            </div>
+            <div class="kpi-item-compact">
+                <span class="kpi-label-tiny">Rate</span>
+                <span class="kpi-value-tiny" id="kpi-success-rate">100%</span>
+            </div>
+            <div class="kpi-item-compact">
+                <span class="kpi-label-tiny">Time</span>
+                <span class="kpi-value-tiny" id="kpi-avg-time">0s</span>
+            </div>
+            <div class="kpi-item-compact">
+                <span class="kpi-label-tiny">STT</span>
+                <span class="kpi-value-tiny" id="kpi-stt-calls">0</span>
+            </div>
+            <div class="kpi-item-compact">
+                <span class="kpi-label-tiny">GPT</span>
+                <span class="kpi-value-tiny" id="kpi-gpt-calls">0</span>
+            </div>
+            <div class="kpi-item-compact">
+                <span class="kpi-label-tiny">TTS</span>
+                <span class="kpi-value-tiny" id="kpi-tts-calls">0</span>
+            </div>
+            <div class="kpi-item-compact">
+                <span class="kpi-label-tiny">Err</span>
+                <span class="kpi-value-tiny" id="kpi-errors">0</span>
+            </div>
+        </div>
+        <button id="reset-kpis-btn" class="btn-reset">Reset</button>
+    </div>
+
+    <div class="container">
+        <!-- Central Sphere -->
+        <div class="sphere-container">
+            <img src="sphere.png" alt="Sphere" class="sphere-image" id="sphere-image">
+            <div class="sphere-glow"></div>
+            <div class="status" id="status">Ready</div>
+        </div>
+
+        <!-- Bottom Input Section -->
+        <div class="input-section-bottom">
+            <div class="input-tabs">
+                <button id="text-tab" class="tab-btn active">Text</button>
+                <button id="voice-tab" class="tab-btn">Voice</button>
+                <button id="pdf-tab" class="tab-btn">📄 PDF</button>
+            </div>
+
+            <!-- Text Input -->
+            <div id="text-input-section" class="input-panel">
+                <div class="input-wrapper">
+                    <input 
+                        type="text" 
+                        id="text-input" 
+                        placeholder="What do you want to see..."
+                        class="text-input-field"
+                    />
+                    <button id="send-text-btn" class="btn-send">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Voice Input -->
+            <div id="voice-input-section" class="input-panel" style="display: none;">
+                <div class="voice-controls">
+                    <button id="record-btn" class="btn-voice">
+                        🎤 Start Recording
+                    </button>
+                    <button id="stop-btn" class="btn-voice btn-stop" style="display: none;">
+                        ⏹ Stop & Send
+                    </button>
+                </div>
+            </div>
+
+            <!-- PDF Upload -->
+            <div id="pdf-input-section" class="input-panel" style="display: none;">
+                <div class="pdf-upload-wrapper">
+                    <input type="file" id="pdf-file-input" accept=".pdf,.txt" style="display: none;">
+                    <button id="select-pdf-btn" class="btn-pdf-select">
+                        📄 Select PDF/Text File
+                    </button>
+                    <button id="upload-pdf-btn" class="btn-pdf-upload" style="display: none;" disabled>
+                        ⬆️ Upload & Process
+                    </button>
+                    <div id="pdf-status" class="pdf-status" style="display: none;"></div>
+                    <div id="pdf-file-name" class="pdf-file-name"></div>
+                    
+                    <!-- Progress Container -->
+                    <div id="pdf-progress-container" class="pdf-progress-container" style="display: none;">
+                        <div class="progress-summary">
+                            <span id="progress-summary-text">Processing document...</span>
+                            <span id="progress-time" class="progress-time"></span>
+                        </div>
+                        <div class="progress-steps">
+                            <div class="progress-step" id="step-extract">
+                                <button class="step-info-btn">ℹ️</button>
+                                <span class="step-icon">⏳</span>
+                                <span class="step-text">Extracting text</span>
+                                <div class="step-description">Reading PDF content...</div>
+                                <div class="step-details" style="display: none;">Extracting text from all pages of the PDF document.</div>
+                            </div>
+                            <div class="progress-step" id="step-sections">
+                                <button class="step-info-btn">ℹ️</button>
+                                <span class="step-icon">⏳</span>
+                                <span class="step-text">Identifying sections</span>
+                                <div class="step-description">Analyzing document structure...</div>
+                                <div class="step-details" style="display: none;">Breaking document into logical sections for tutoring.</div>
+                            </div>
+                            <div class="progress-step" id="step-rag">
+                                <button class="step-info-btn">ℹ️</button>
+                                <span class="step-icon">⏳</span>
+                                <span class="step-text">Uploading to Pinecone</span>
+                                <div class="step-description">Creating embeddings and uploading...</div>
+                                <div class="step-details" style="display: none;">Converting text chunks to vectors and storing in Pinecone for RAG.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Conversation Display -->
+        <div class="conversation" id="conversation">
+            <!-- Messages will be added here -->
+        </div>
+
+        <!-- Audio Player -->
+        <audio id="audio-player" controls style="display: none; width: 100%; margin-top: 20px;"></audio>
+    </div>
+
+    <!-- Mini PDF Viewer Panel -->
+    <div id="mini-pdf-viewer-panel" class="mini-pdf-viewer-panel" style="display: none;">
+        <div class="mini-pdf-viewer-header">
+            <span id="mini-pdf-viewer-title" class="mini-pdf-viewer-title">PDF Viewer</span>
+            <div class="pdf-viewer-controls">
+                <button id="btn-minimize-pdf" class="btn-minimize-pdf" title="Minimize">−</button>
+                <button id="btn-maximize-pdf" class="btn-maximize-pdf" title="Maximize">+</button>
+                <button id="btn-close-pdf" class="btn-close-pdf" title="Close">×</button>
+            </div>
+        </div>
+        <div id="pdf-canvas-container" class="pdf-canvas-container">
+            <!-- PDF pages will be rendered here -->
+        </div>
+        <div id="section-highlight" class="section-highlight" style="display: none;">
+            <div class="section-highlight-header">
+                <span id="section-title-display"></span>
+                <span id="section-progress"></span>
+            </div>
+            <div id="section-preview" class="section-preview"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

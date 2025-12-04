@@ -1,0 +1,971 @@
+/**
+ * AI Assistant Frontend
+ * Supports both text and voice input
+ */
+
+const API_BASE_URL = 'http://localhost:3000';
+
+// Session management for conversation memory
+let sessionId = localStorage.getItem('chatSessionId') || null;
+
+// Initialize session on page load
+if (!sessionId) {
+    sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem('chatSessionId', sessionId);
+}
+
+// UI Elements
+const status = document.getElementById('status');
+const textTab = document.getElementById('text-tab');
+const voiceTab = document.getElementById('voice-tab');
+const pdfTab = document.getElementById('pdf-tab');
+const textInputSection = document.getElementById('text-input-section');
+const voiceInputSection = document.getElementById('voice-input-section');
+const pdfInputSection = document.getElementById('pdf-input-section');
+const textInput = document.getElementById('text-input');
+const sendTextBtn = document.getElementById('send-text-btn');
+const recordBtn = document.getElementById('record-btn');
+const stopBtn = document.getElementById('stop-btn');
+const conversation = document.getElementById('conversation');
+const audioPlayer = document.getElementById('audio-player');
+const pdfFileInput = document.getElementById('pdf-file-input');
+const selectPdfBtn = document.getElementById('select-pdf-btn');
+const uploadPdfBtn = document.getElementById('upload-pdf-btn');
+const pdfStatus = document.getElementById('pdf-status');
+const pdfFileName = document.getElementById('pdf-file-name');
+const documentsPanel = document.getElementById('documents-panel');
+const documentsList = document.getElementById('documents-list');
+
+// Track uploaded documents
+let uploadedDocuments = [];
+
+// Load documents from localStorage
+function loadDocuments() {
+    const saved = localStorage.getItem('uploadedDocuments');
+    if (saved) {
+        uploadedDocuments = JSON.parse(saved);
+        updateDocumentsList();
+    }
+}
+
+// Save documents to localStorage
+function saveDocuments() {
+    localStorage.setItem('uploadedDocuments', JSON.stringify(uploadedDocuments));
+}
+
+// Update documents list display
+function updateDocumentsList() {
+    if (uploadedDocuments.length === 0) {
+        documentsList.innerHTML = '<div class="document-item" style="color: rgba(255, 255, 255, 0.5); font-style: italic;">No documents yet</div>';
+        documentsPanel.style.display = 'none';
+    } else {
+        documentsList.innerHTML = uploadedDocuments.map(doc => 
+            `<div class="document-item" title="ID: ${doc.id}">${doc.name}</div>`
+        ).join('');
+        documentsPanel.style.display = 'block';
+    }
+}
+
+// Voice recording
+let mediaRecorder;
+let audioChunks = [];
+let isRecording = false;
+
+// KPI Metrics
+let metrics = {
+    messagesSent: 0,
+    responsesReceived: 0,
+    errors: 0,
+    sttCalls: 0,
+    gptCalls: 0,
+    ttsCalls: 0,
+    responseTimes: []
+};
+
+// Load metrics from localStorage
+function loadMetrics() {
+    const saved = localStorage.getItem('aiAssistantMetrics');
+    if (saved) {
+        metrics = JSON.parse(saved);
+        updateKPIs();
+    }
+}
+
+// Save metrics to localStorage
+function saveMetrics() {
+    localStorage.setItem('aiAssistantMetrics', JSON.stringify(metrics));
+}
+
+// Update KPI display
+function updateKPIs() {
+    document.getElementById('kpi-messages').textContent = metrics.messagesSent;
+    document.getElementById('kpi-responses').textContent = metrics.responsesReceived;
+    
+    const totalAttempts = metrics.messagesSent;
+    const successRate = totalAttempts > 0 
+        ? Math.round((metrics.responsesReceived / totalAttempts) * 100) 
+        : 100;
+    document.getElementById('kpi-success-rate').textContent = `${successRate}%`;
+    
+    const avgTime = metrics.responseTimes.length > 0
+        ? (metrics.responseTimes.reduce((a, b) => a + b, 0) / metrics.responseTimes.length / 1000).toFixed(1)
+        : 0;
+    document.getElementById('kpi-avg-time').textContent = `${avgTime}s`;
+    
+    document.getElementById('kpi-stt-calls').textContent = metrics.sttCalls;
+    document.getElementById('kpi-gpt-calls').textContent = metrics.gptCalls;
+    document.getElementById('kpi-tts-calls').textContent = metrics.ttsCalls;
+    document.getElementById('kpi-errors').textContent = metrics.errors;
+    
+    saveMetrics();
+}
+
+// Reset metrics
+function resetMetrics() {
+    if (confirm('Reset all performance metrics?')) {
+        metrics = {
+            messagesSent: 0,
+            responsesReceived: 0,
+            errors: 0,
+            sttCalls: 0,
+            gptCalls: 0,
+            ttsCalls: 0,
+            responseTimes: []
+        };
+        updateKPIs();
+    }
+}
+
+// Initialize metrics and documents
+loadMetrics();
+loadDocuments();
+
+// Tab switching
+textTab.addEventListener('click', () => {
+    textTab.classList.add('active');
+    voiceTab.classList.remove('active');
+    pdfTab.classList.remove('active');
+    textInputSection.style.display = 'block';
+    voiceInputSection.style.display = 'none';
+    pdfInputSection.style.display = 'none';
+});
+
+voiceTab.addEventListener('click', () => {
+    voiceTab.classList.add('active');
+    textTab.classList.remove('active');
+    pdfTab.classList.remove('active');
+    voiceInputSection.style.display = 'block';
+    textInputSection.style.display = 'none';
+    pdfInputSection.style.display = 'none';
+});
+
+pdfTab.addEventListener('click', () => {
+    pdfTab.classList.add('active');
+    textTab.classList.remove('active');
+    voiceTab.classList.remove('active');
+    pdfInputSection.style.display = 'block';
+    textInputSection.style.display = 'none';
+    voiceInputSection.style.display = 'none';
+});
+
+// Text input handler
+sendTextBtn.addEventListener('click', async () => {
+    const userText = textInput.value.trim();
+    if (!userText) {
+        alert('Please enter a message');
+        return;
+    }
+    
+    await sendTextMessage(userText);
+});
+
+textInput.addEventListener('keypress', async (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        const userText = textInput.value.trim();
+        if (userText) {
+            await sendTextMessage(userText);
+        }
+    }
+});
+
+// Voice recording handlers
+recordBtn.addEventListener('click', async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = (event) => {
+            audioChunks.push(event.data);
+        };
+        
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            await sendVoiceMessage(audioBlob);
+            stream.getTracks().forEach(track => track.stop());
+        };
+        
+        mediaRecorder.start();
+        isRecording = true;
+        recordBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        status.textContent = '🔴 Recording... Click stop when done';
+        status.className = 'status recording';
+        
+    } catch (error) {
+        alert('Error accessing microphone: ' + error.message);
+        console.error(error);
+    }
+});
+
+stopBtn.addEventListener('click', () => {
+    if (mediaRecorder && isRecording) {
+        mediaRecorder.stop();
+        isRecording = false;
+        recordBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'none';
+        status.textContent = 'Processing...';
+        status.className = 'status processing';
+    }
+});
+
+// Send text message
+async function sendTextMessage(userText) {
+    // Check if we're in tutoring mode
+    if (tutoringSessionId) {
+        await sendTutoringMessage(userText);
+        textInput.value = '';
+        return;
+    }
+    
+    // Clear input
+    textInput.value = '';
+    
+    // Add user message to conversation
+    addMessage('user', userText);
+    
+    // Update metrics
+    metrics.messagesSent++;
+    updateKPIs();
+    
+    // Update status
+    status.textContent = 'Processing...';
+    status.className = 'status processing';
+    sendTextBtn.disabled = true;
+    
+    const startTime = Date.now();
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/chat-text`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                text: userText,
+                session_id: sessionId  // Send session ID for memory
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(errorData.error || `HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Update session ID if provided
+        if (data.session_id) {
+            sessionId = data.session_id;
+            localStorage.setItem('chatSessionId', sessionId);
+        }
+        
+        // Track response time
+        const responseTime = Date.now() - startTime;
+        metrics.responseTimes.push(responseTime);
+        if (metrics.responseTimes.length > 50) {
+            metrics.responseTimes.shift(); // Keep only last 50
+        }
+        
+        // Update metrics
+        metrics.gptCalls++;
+        metrics.ttsCalls++;
+        metrics.responsesReceived++;
+        updateKPIs();
+        
+        // Add AI reply to conversation with RAG indicator
+        addMessage('ai', data.reply_text, false, data.rag_used);
+        
+        // Play audio
+        if (data.audio_url) {
+            playAudio(`${API_BASE_URL}${data.audio_url}`);
+        }
+        
+        status.textContent = '✅ Complete!';
+        status.className = 'status success';
+        
+    } catch (error) {
+        console.error('Error:', error);
+        metrics.errors++;
+        updateKPIs();
+        status.textContent = `❌ Error: ${error.message}`;
+        status.className = 'status error';
+        addMessage('error', `Error: ${error.message}`);
+    } finally {
+        sendTextBtn.disabled = false;
+    }
+
+}
+
+// Send voice message
+async function sendVoiceMessage(audioBlob) {
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'recording.webm');
+    formData.append('session_id', sessionId);  // Add session ID for memory
+    
+    // Update metrics
+    metrics.messagesSent++;
+    updateKPIs();
+    
+    status.textContent = '🔄 Processing: Speech → Text → AI → Speech...';
+    status.className = 'status processing';
+    
+    const startTime = Date.now();
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/chat-voice`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(errorData.error || `HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Update session ID if provided
+        if (data.session_id) {
+            sessionId = data.session_id;
+            localStorage.setItem('chatSessionId', sessionId);
+        }
+        
+        // Track response time
+        const responseTime = Date.now() - startTime;
+        metrics.responseTimes.push(responseTime);
+        if (metrics.responseTimes.length > 50) {
+            metrics.responseTimes.shift(); // Keep only last 50
+        }
+        
+        // Update metrics
+        metrics.sttCalls++;
+        metrics.gptCalls++;
+        metrics.ttsCalls++;
+        metrics.responsesReceived++;
+        updateKPIs();
+        
+        // Add user transcription
+        if (data.transcription) {
+            addMessage('user', data.transcription, true);
+        }
+        
+        // Add AI reply with RAG indicator
+        if (data.reply_text) {
+            addMessage('ai', data.reply_text, false, data.rag_used);
+        }
+        
+        // Play audio
+        if (data.audio_url) {
+            playAudio(`${API_BASE_URL}${data.audio_url}`);
+        }
+        
+        status.textContent = '✅ Complete!';
+        status.className = 'status success';
+        
+    } catch (error) {
+        console.error('Error:', error);
+        metrics.errors++;
+        updateKPIs();
+        status.textContent = `❌ Error: ${error.message}`;
+        status.className = 'status error';
+        addMessage('error', `Error: ${error.message}`);
+    }
+}
+
+// Add message to conversation
+function addMessage(role, text, isTranscription = false, ragUsed = false) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${role}`;
+    
+    const label = role === 'user' ? (isTranscription ? 'You (voice)' : 'You') : 'AI';
+    const icon = role === 'user' ? '👤' : '🤖';
+    
+    // Add RAG badge if document context was used
+    const ragBadge = (role === 'ai' && ragUsed) 
+        ? '<span class="rag-badge">📄 Using document context</span>' 
+        : '';
+    
+    messageDiv.innerHTML = `
+        <div class="message-header">
+            <span class="message-icon">${icon}</span>
+            <span class="message-label">${label}</span>
+            ${ragBadge}
+        </div>
+        <div class="message-text">${text}</div>
+    `;
+    
+    conversation.appendChild(messageDiv);
+    conversation.scrollTop = conversation.scrollHeight;
+}
+
+// Play audio
+function playAudio(audioUrl) {
+    audioPlayer.src = audioUrl;
+    audioPlayer.style.display = 'block';
+    try {
+        audioPlayer.play().catch(err => {
+            console.log('Autoplay prevented:', err);
+        });
+    } catch (err) {
+        console.log('Audio play error:', err);
+    }
+}
+
+// Tutoring mode variables
+let tutoringSessionId = null;
+let currentDocumentId = null;
+let pdfDocument = null;
+let pdfPages = [];
+
+// PDF Viewer elements
+const miniPdfViewerPanel = document.getElementById('mini-pdf-viewer-panel');
+const miniPdfViewerTitle = document.getElementById('mini-pdf-viewer-title');
+const btnMinimizePdf = document.getElementById('btn-minimize-pdf');
+const btnMaximizePdf = document.getElementById('btn-maximize-pdf');
+const btnClosePdf = document.getElementById('btn-close-pdf');
+const pdfCanvasContainer = document.getElementById('pdf-canvas-container');
+const sectionHighlight = document.getElementById('section-highlight');
+const sectionTitleDisplay = document.getElementById('section-title-display');
+const sectionProgress = document.getElementById('section-progress');
+const sectionPreview = document.getElementById('section-preview');
+
+// PDF Viewer controls
+btnMinimizePdf?.addEventListener('click', () => {
+    miniPdfViewerPanel.style.width = '250px';
+    miniPdfViewerPanel.classList.add('minimized');
+});
+
+btnMaximizePdf?.addEventListener('click', () => {
+    miniPdfViewerPanel.style.width = '350px';
+    miniPdfViewerPanel.classList.remove('minimized');
+});
+
+btnClosePdf?.addEventListener('click', () => {
+    miniPdfViewerPanel.style.display = 'none';
+});
+
+// Render PDF in mini viewer using PDF.js
+async function renderPdfInMiniViewer(file) {
+    if (!file || file.type !== 'application/pdf') return;
+    
+    try {
+        // Initialize PDF.js if available
+        if (typeof pdfjsLib === 'undefined') {
+            console.error('PDF.js library not loaded');
+            return;
+        }
+        
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        
+        const arrayBuffer = await file.arrayBuffer();
+        pdfDocument = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        pdfPages = [];
+        
+        pdfCanvasContainer.innerHTML = '';
+        
+            // Render all pages (limit to first 10 pages for performance)
+            const maxPages = Math.min(pdfDocument.numPages, 10);
+            for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+                const page = await pdfDocument.getPage(pageNum);
+                const viewport = page.getViewport({ scale: 1.2 });
+                
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.className = 'pdf-page-canvas';
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                canvas.setAttribute('data-page', pageNum);
+                
+                await page.render({
+                    canvasContext: context,
+                    viewport: viewport
+                }).promise;
+                
+                pdfCanvasContainer.appendChild(canvas);
+                pdfPages.push({ page, canvas, pageNum });
+            }
+            
+            if (pdfDocument.numPages > maxPages) {
+                const moreInfo = document.createElement('div');
+                moreInfo.className = 'pdf-more-info';
+                moreInfo.style.cssText = 'text-align: center; padding: 10px; color: rgba(255,255,255,0.6); font-size: 0.85em;';
+                moreInfo.textContent = `... and ${pdfDocument.numPages - maxPages} more pages`;
+                pdfCanvasContainer.appendChild(moreInfo);
+            }
+        
+        miniPdfViewerTitle.textContent = file.name;
+        miniPdfViewerPanel.style.display = 'block';
+        
+    } catch (error) {
+        console.error('Error rendering PDF:', error);
+    }
+}
+
+// Show PDF viewer
+function showPdfViewer(title, pdfPath) {
+    if (pdfCanvasContainer.children.length > 0) {
+        // Already rendered client-side
+        miniPdfViewerTitle.textContent = title;
+        miniPdfViewerPanel.style.display = 'block';
+    } else {
+        // Fallback: use iframe for server-side PDF
+        pdfCanvasContainer.innerHTML = `<iframe src="${pdfPath}" style="width: 100%; height: 100%; border: none;"></iframe>`;
+        miniPdfViewerTitle.textContent = title;
+        miniPdfViewerPanel.style.display = 'block';
+    }
+}
+
+// Highlight section in PDF viewer
+function highlightSection(sectionIndex, sectionTitle, sectionText, totalSections) {
+    sectionTitleDisplay.textContent = sectionTitle || `Section ${sectionIndex + 1}`;
+    sectionProgress.textContent = `Section ${sectionIndex + 1} of ${totalSections}`;
+    
+    // Show preview of section text
+    const previewText = sectionText ? sectionText.substring(0, 200) + (sectionText.length > 200 ? '...' : '') : '';
+    sectionPreview.textContent = previewText;
+    
+    sectionHighlight.style.display = 'block';
+    
+    // Try to scroll to relevant page (rough estimate: 5 pages per section)
+    if (pdfPages.length > 0 && sectionIndex >= 0) {
+        const estimatedPage = Math.min(Math.floor((sectionIndex / totalSections) * pdfPages.length) + 1, pdfPages.length);
+        const targetCanvas = pdfPages.find(p => p.pageNum === estimatedPage)?.canvas;
+        if (targetCanvas) {
+            targetCanvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Add highlight pulse
+            targetCanvas.style.boxShadow = '0 0 20px rgba(100, 181, 246, 0.8)';
+            setTimeout(() => {
+                targetCanvas.style.boxShadow = '';
+            }, 2000);
+        }
+    }
+}
+
+// Start tutoring session
+async function startTutoringSession(documentId) {
+    if (!documentId) {
+        console.error('No document ID provided');
+        return;
+    }
+    
+    currentDocumentId = documentId;
+    
+    try {
+        status.textContent = 'Starting tutoring session...';
+        status.className = 'status processing';
+        
+        const response = await fetch(`${API_BASE_URL}/start-tutoring`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ document_id: documentId })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to start tutoring session');
+        }
+        
+        tutoringSessionId = data.session_id;
+        
+        // Show PDF viewer if we have the path
+        if (data.pdf_file_path) {
+            showPdfViewer(data.pdf_filename || 'Document', data.pdf_file_path);
+            if (data.current_section_index !== undefined) {
+                highlightSection(
+                    data.current_section_index,
+                    data.current_section_title,
+                    '',
+                    data.sections ? data.sections.length : 1
+                );
+            }
+        }
+        
+        // Add AI's message
+        addMessage('ai', data.message);
+        
+        // Generate and play TTS
+        if (data.audio_url) {
+            playAudio(`${API_BASE_URL}${data.audio_url}`);
+        } else {
+            // Generate TTS if not provided
+            try {
+                const audioBytes = await fetch(`${API_BASE_URL}/tutoring-chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: tutoringSessionId,
+                        message: data.message
+                    })
+                }).then(r => r.json());
+                
+                if (audioBytes.audio_url) {
+                    playAudio(`${API_BASE_URL}${audioBytes.audio_url}`);
+                }
+            } catch (err) {
+                console.error('TTS generation error:', err);
+            }
+        }
+        
+        status.textContent = '✅ Tutoring session started!';
+        status.className = 'status success';
+        
+        // Switch to text input for tutoring
+        textTab.click();
+        
+    } catch (error) {
+        console.error('Error starting tutoring:', error);
+        status.textContent = `❌ Error: ${error.message}`;
+        status.className = 'status error';
+        addMessage('error', `Error starting tutoring: ${error.message}`);
+    }
+}
+
+// Send tutoring message
+async function sendTutoringMessage(userMessage) {
+    if (!tutoringSessionId) {
+        addMessage('error', 'No active tutoring session');
+        return;
+    }
+    
+    addMessage('user', userMessage);
+    metrics.messagesSent++;
+    updateKPIs();
+    
+    status.textContent = 'Processing...';
+    status.className = 'status processing';
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/tutoring-chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: tutoringSessionId,
+                message: userMessage
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to send tutoring message');
+        }
+        
+        // Add AI response
+        addMessage('ai', data.message);
+        
+        // Update section highlight if needed
+        if (data.section_index !== undefined && data.section_title) {
+            // Get total sections from session state or estimate
+            highlightSection(
+                data.section_index,
+                data.section_title,
+                data.section_text || '',
+                10 // Estimate, could be improved
+            );
+        }
+        
+        // Handle quiz questions
+        if (data.quiz_question && data.quiz_options) {
+            const quizHtml = `
+                <div class="quiz-container">
+                    <div class="quiz-question">${data.quiz_question}</div>
+                    <div class="quiz-options">
+                        ${data.quiz_options.map((opt, idx) => 
+                            `<button class="quiz-option" onclick="selectQuizAnswer('${String.fromCharCode(65 + idx)}')">${String.fromCharCode(65 + idx)}) ${opt}</button>`
+                        ).join('')}
+                    </div>
+                </div>
+            `;
+            // Could add quiz UI here
+        }
+        
+        // Play audio
+        if (data.audio_url) {
+            playAudio(`${API_BASE_URL}${data.audio_url}`);
+        }
+        
+        metrics.responsesReceived++;
+        updateKPIs();
+        
+        status.textContent = data.state === 'complete' ? '✅ Session completed!' : '✅ Ready';
+        status.className = 'status success';
+        
+        // If session is complete, reset
+        if (data.state === 'complete') {
+            tutoringSessionId = null;
+        }
+        
+    } catch (error) {
+        console.error('Error in tutoring chat:', error);
+        metrics.errors++;
+        updateKPIs();
+        status.textContent = `❌ Error: ${error.message}`;
+        status.className = 'status error';
+        addMessage('error', `Error: ${error.message}`);
+    }
+}
+
+// Select quiz answer
+function selectQuizAnswer(answer) {
+    if (tutoringSessionId) {
+        sendTutoringMessage(answer);
+    }
+}
+
+// Progress step helpers
+function updateProgressStep(stepId, status, icon = '') {
+    const step = document.getElementById(stepId);
+    if (!step) return;
+    
+    step.className = `progress-step ${status}`;
+    const iconEl = step.querySelector('.step-icon');
+    if (iconEl && icon) {
+        iconEl.textContent = icon;
+    }
+}
+
+function updateProgressSummary(stepId, status) {
+    const summaryText = document.getElementById('progress-summary-text');
+    if (summaryText) {
+        const stepNames = {
+            'step-extract': 'Extracting text',
+            'step-sections': 'Identifying sections',
+            'step-rag': 'Uploading to Pinecone'
+        };
+        summaryText.textContent = `${stepNames[stepId] || 'Processing'}... (${status})`;
+    }
+}
+
+function updateProgressSummaryTime(timeText) {
+    const timeEl = document.getElementById('progress-time');
+    if (timeEl) {
+        timeEl.textContent = timeText;
+    }
+}
+
+// Initialize progress info buttons
+function initProgressInfoButtons() {
+    document.querySelectorAll('.step-info-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const step = btn.closest('.progress-step');
+            const details = step.querySelector('.step-details');
+            if (details) {
+                details.style.display = details.style.display === 'none' ? 'block' : 'none';
+            }
+        });
+    });
+}
+
+// Check server connection on load
+async function checkServer() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/health`);
+        if (response.ok) {
+            status.textContent = '✅ Connected to server';
+            status.className = 'status success';
+        }
+    } catch (error) {
+        status.textContent = '❌ Cannot connect to server. Make sure backend is running on port 3000.';
+        status.className = 'status error';
+    }
+}
+
+// Reset KPI button
+const resetBtn = document.getElementById('reset-kpis-btn');
+if (resetBtn) {
+    resetBtn.addEventListener('click', resetMetrics);
+}
+
+// PDF Upload handlers
+selectPdfBtn.addEventListener('click', () => {
+    pdfFileInput.click();
+});
+
+pdfFileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        pdfFileName.textContent = `Selected: ${file.name}`;
+        pdfFileName.style.display = 'block';
+        uploadPdfBtn.style.display = 'inline-block';
+        uploadPdfBtn.disabled = false;
+        pdfStatus.style.display = 'none';
+        
+        // Render PDF immediately in mini viewer
+        if (file.type === 'application/pdf') {
+            await renderPdfInMiniViewer(file);
+        }
+    }
+});
+
+uploadPdfBtn.addEventListener('click', async () => {
+    const file = pdfFileInput.files[0];
+    if (!file) {
+        showPdfStatus('Please select a file first', 'error');
+        return;
+    }
+    
+    uploadPdfBtn.disabled = true;
+    uploadPdfBtn.textContent = '⏳ Processing...';
+    
+    // Show progress container
+    const progressContainer = document.getElementById('pdf-progress-container');
+    if (progressContainer) {
+        progressContainer.style.display = 'block';
+    }
+    
+    // Initialize progress steps
+    updateProgressStep('step-extract', 'active', '⏳');
+    updateProgressStep('step-sections', 'pending', '⏳');
+    updateProgressStep('step-rag', 'pending', '⏳');
+    updateProgressSummary('step-extract', 'Starting...');
+    
+    const startTime = Date.now();
+    const updateTimer = setInterval(() => {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        updateProgressSummaryTime(`${elapsed}s`);
+    }, 100);
+    
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const response = await fetch(`${API_BASE_URL}/upload-document`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        clearInterval(updateTimer);
+        
+        if (response.ok) {
+            // Update progress steps
+            updateProgressStep('step-extract', 'complete', '✅');
+            updateProgressSummary('step-extract', 'Complete');
+            
+            if (data.processing_time) {
+                setTimeout(() => {
+                    updateProgressStep('step-sections', 'complete', '✅');
+                    updateProgressSummary('step-sections', 'Complete');
+                    
+                    setTimeout(() => {
+                        updateProgressStep('step-rag', 'complete', '✅');
+                        updateProgressSummary('step-rag', 'Complete');
+                        updateProgressSummaryTime(`Total: ${data.processing_time.total}s`);
+                    }, 500);
+                }, 500);
+            }
+            
+            // Add to documents list
+            uploadedDocuments.push({
+                id: data.document_id,
+                name: file.name,
+                chunks: data.chunks_count,
+                uploadedAt: new Date().toISOString()
+            });
+            saveDocuments();
+            updateDocumentsList();
+            
+            showPdfStatus(
+                `✅ Success! Processed ${data.chunks_count} chunks. Document ID: ${data.document_id}`,
+                'success'
+            );
+            
+            // Auto-start tutoring if flag is set
+            if (data.auto_start_tutoring && data.document_id) {
+                // Wait a moment for progress to show, then start tutoring
+                setTimeout(() => {
+                    startTutoringSession(data.document_id);
+                }, 1000);
+            }
+            
+            // Show PDF viewer with file path if available
+            if (data.pdf_file_path) {
+                showPdfViewer(data.pdf_filename || file.name, data.pdf_file_path);
+            }
+            
+            pdfFileInput.value = '';
+            pdfFileName.textContent = '';
+            pdfFileName.style.display = 'none';
+            uploadPdfBtn.style.display = 'none';
+            
+            // Update status
+            status.textContent = '✅ Document uploaded successfully';
+            status.className = 'status success';
+        } else {
+            updateProgressStep('step-extract', 'error', '❌');
+            showPdfStatus(`❌ Error: ${data.error}`, 'error');
+            status.textContent = `❌ Upload failed: ${data.error}`;
+            status.className = 'status error';
+        }
+    } catch (error) {
+        clearInterval(updateTimer);
+        console.error('Upload error:', error);
+        updateProgressStep('step-extract', 'error', '❌');
+        showPdfStatus(`❌ Error: ${error.message}`, 'error');
+        status.textContent = `❌ Upload failed: ${error.message}`;
+        status.className = 'status error';
+    } finally {
+        uploadPdfBtn.disabled = false;
+        uploadPdfBtn.textContent = '⬆️ Upload & Process';
+    }
+});
+
+function showPdfStatus(message, type) {
+    pdfStatus.textContent = message;
+    pdfStatus.className = `pdf-status pdf-status-${type}`;
+    pdfStatus.style.display = 'block';
+}
+
+// Greet user on page load
+async function greetUser() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/greet`, {
+            method: 'GET'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            addMessage('ai', data.greeting);
+            
+            // Play greeting audio (ElevenLabs speaking)
+            if (data.audio_url) {
+                playAudio(`${API_BASE_URL}${data.audio_url}`);
+            }
+        }
+    } catch (error) {
+        console.error('Greeting error:', error);
+        // Fallback greeting
+        addMessage('ai', "Hello! I'm your AI assistant. How can I help you today?");
+    }
+}
+
+// Initialize progress info buttons on load
+initProgressInfoButtons();
+
+// Check on page load
+checkServer().then(() => {
+    setTimeout(greetUser, 500); // Small delay to ensure server is ready
+});
+
