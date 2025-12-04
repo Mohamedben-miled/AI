@@ -575,16 +575,50 @@ def start_tutoring():
             sections=sections
         )
         
-        # Auto-advance to first section
+        # Auto-advance to first section immediately (skip introduction display, go straight to teaching)
+        print(f"[TUTORING] Processing 'start' message to advance to first section...")
         response = tutoring_service.process_user_message(session_id, "start")
+        print(f"[TUTORING] Response state: {response.get('state')}, Message length: {len(response.get('message', ''))}")
+        
+        # Use the section presentation message (skip introduction to start teaching immediately)
+        teaching_message = response.get('message', '')
+        if not teaching_message or len(teaching_message.strip()) < 10:
+            print(f"[TUTORING] WARNING: Teaching message seems empty, generating fallback...")
+            # Fallback: generate a direct section presentation
+            current_section = sections[0] if sections else None
+            if current_section:
+                teaching_message = f"Let's begin learning! I'll teach you about: {current_section.get('title', 'Section 1')}"
         
         current_section_index = tutoring_service.get_session_state(session_id)['current_section_index']
         current_section = sections[current_section_index] if current_section_index < len(sections) else sections[0]
+        print(f"[TUTORING] Current section: {current_section_index}, Title: {current_section.get('title', 'N/A')}")
+        
+        # Generate TTS audio for the teaching message (IMPORTANT: same message as displayed)
+        audio_url = None
+        try:
+            print(f"[TUTORING] Generating TTS for message (length: {len(teaching_message)} chars)...")
+            audio_bytes = tts_service.synthesize(teaching_message)
+            if audio_bytes:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                audio_filename = f"tutoring_start_{timestamp}.mp3"
+                audio_path = os.path.join(AUDIO_FOLDER, audio_filename)
+                
+                with open(audio_path, 'wb') as f:
+                    f.write(audio_bytes)
+                
+                audio_url = f'/audio/{audio_filename}'
+                print(f"[TUTORING] TTS audio generated: {audio_filename}")
+            else:
+                print(f"[TUTORING] WARNING: TTS returned empty audio")
+        except Exception as e:
+            print(f"[TUTORING] Error generating TTS: {e}")
+            import traceback
+            traceback.print_exc()
         
         return jsonify({
             'success': True,
             'session_id': session_id,
-            'message': response['message'],
+            'message': teaching_message,
             'state': response['state'],
             'pdf_file_path': file_path,
             'pdf_filename': filename,
@@ -593,7 +627,8 @@ def start_tutoring():
             'current_section_title': current_section.get('title', 'Section 1'),
             'section_text': current_section.get('text', '') if current_section else '',
             'quiz_question': response.get('quiz_question'),
-            'quiz_options': response.get('quiz_options')
+            'quiz_options': response.get('quiz_options'),
+            'audio_url': audio_url  # Add audio URL so frontend can play it
         }), 200
         
     except Exception as e:
@@ -633,17 +668,32 @@ def tutoring_chat():
         current_section = sections[current_section_index] if current_section_index < len(sections) else None
         
         # Build response with metadata
+        # Use section_text from response if available (for highlighting), otherwise use current section
+        section_text = response.get('section_text', '')
+        if not section_text and current_section:
+            section_text = current_section.get('text', '')
+        
+        # Use sections from response if provided (when moving to next section)
+        response_sections = response.get('sections', sections)
+        
         response_data = {
             'message': response.get('message', ''),
             'state': response.get('state', 'unknown'),
-            'section_index': current_section_index,
-            'section_title': current_section.get('title', '') if current_section else '',
-            'section_text': current_section.get('text', '') if current_section else '',
-            'sections': sections,  # Include all sections for total count
+            'section_index': response.get('section_index', current_section_index),
+            'section_title': response.get('section_title', current_section.get('title', '') if current_section else ''),
+            'section_text': section_text,
+            'sections': response_sections,  # Include all sections for total count
             'quiz_question': response.get('quiz_question'),
             'quiz_options': response.get('quiz_options'),
-            'user_answer': response.get('user_answer')
+            'user_answer': response.get('user_answer'),
+            'is_correct': response.get('is_correct'),  # True/False for quiz answers
+            'highlight_section': response.get('highlight_section', False),  # Flag to highlight section
+            'explanation_attempts': response.get('explanation_attempts', 0),  # Number of explanation attempts
+            'can_skip_to_next': response.get('can_skip_to_next', False),  # Flag to show "Next Section" button
+            'quiz_count': response.get('quiz_count', 0)  # Number of quizzes completed in current section
         }
+        
+        print(f"[TUTORING] Response: state={response_data['state']}, section_index={response_data['section_index']}, section_title={response_data['section_title']}")
         
         # Generate TTS audio
         audio_url = None

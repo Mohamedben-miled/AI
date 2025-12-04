@@ -535,8 +535,8 @@ function showPdfViewer(title, pdfPath) {
     }
 }
 
-// Highlight section in PDF viewer
-function highlightSection(sectionIndex, sectionTitle, sectionText, totalSections) {
+// Highlight section in PDF viewer - shows where AI is currently reading
+function highlightSection(sectionIndex, sectionTitle, sectionText, totalSections, emphasize = false) {
     sectionTitleDisplay.textContent = sectionTitle || `Section ${sectionIndex + 1}`;
     sectionProgress.textContent = `Section ${sectionIndex + 1} of ${totalSections}`;
     
@@ -546,17 +546,106 @@ function highlightSection(sectionIndex, sectionTitle, sectionText, totalSections
     
     sectionHighlight.style.display = 'block';
     
-    // Try to scroll to relevant page (rough estimate: 5 pages per section)
-    if (pdfPages.length > 0 && sectionIndex >= 0) {
-        const estimatedPage = Math.min(Math.floor((sectionIndex / totalSections) * pdfPages.length) + 1, pdfPages.length);
+    // Add emphasis styling if wrong answer (needs review)
+    if (emphasize) {
+        sectionHighlight.style.border = '2px solid #f44336';
+        sectionHighlight.style.backgroundColor = 'rgba(244, 67, 54, 0.1)';
+        sectionHighlight.classList.add('section-needs-review');
+    } else {
+        sectionHighlight.style.border = '2px solid rgba(100, 181, 246, 0.6)';
+        sectionHighlight.style.backgroundColor = 'rgba(100, 181, 246, 0.15)';
+        sectionHighlight.classList.remove('section-needs-review');
+    }
+    
+    // Clear previous highlights
+    pdfPages.forEach(({ canvas }) => {
+        canvas.style.boxShadow = '';
+        canvas.style.border = '';
+        canvas.classList.remove('pdf-page-reading');
+    });
+    
+    // Highlight the relevant page(s) where this section is located
+    if (pdfPages.length > 0 && sectionIndex >= 0 && totalSections > 0) {
+        // Calculate which page(s) contain this section
+        const sectionRatio = sectionIndex / totalSections;
+        const estimatedPage = Math.max(1, Math.min(
+            Math.ceil(sectionRatio * pdfPages.length),
+            pdfPages.length
+        ));
+        
+        // Find and highlight the target page
         const targetCanvas = pdfPages.find(p => p.pageNum === estimatedPage)?.canvas;
         if (targetCanvas) {
+            // Scroll to the page
             targetCanvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            // Add highlight pulse
-            targetCanvas.style.boxShadow = '0 0 20px rgba(100, 181, 246, 0.8)';
-            setTimeout(() => {
-                targetCanvas.style.boxShadow = '';
-            }, 2000);
+            
+            // Add persistent highlight showing AI is reading this section
+            const shadowColor = emphasize ? 'rgba(244, 67, 54, 0.9)' : 'rgba(100, 181, 246, 0.9)';
+            const shadowSize = emphasize ? '40px' : '25px';
+            targetCanvas.style.boxShadow = `0 0 ${shadowSize} ${shadowColor}, inset 0 0 20px ${shadowColor}`;
+            targetCanvas.style.border = `3px solid ${emphasize ? '#f44336' : '#64b5f6'}`;
+            targetCanvas.classList.add('pdf-page-reading');
+            
+            // Add a reading indicator overlay
+            if (!targetCanvas.dataset.readingIndicator) {
+                const indicator = document.createElement('div');
+                indicator.className = 'pdf-reading-indicator';
+                indicator.textContent = '📖 AI is reading here';
+                indicator.style.cssText = `
+                    position: absolute;
+                    top: 10px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: rgba(100, 181, 246, 0.9);
+                    color: white;
+                    padding: 8px 16px;
+                    border-radius: 20px;
+                    font-size: 0.85em;
+                    font-weight: 600;
+                    z-index: 1000;
+                    pointer-events: none;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                `;
+                
+                // Position relative to canvas
+                const canvasRect = targetCanvas.getBoundingClientRect();
+                const containerRect = pdfCanvasContainer.getBoundingClientRect();
+                indicator.style.position = 'absolute';
+                indicator.style.top = `${canvasRect.top - containerRect.top + 10}px`;
+                indicator.style.left = `${canvasRect.left - containerRect.left + (canvasRect.width / 2)}px`;
+                indicator.style.transform = 'translateX(-50%)';
+                
+                pdfCanvasContainer.appendChild(indicator);
+                targetCanvas.dataset.readingIndicator = 'true';
+                
+                // Remove indicator after 5 seconds (but keep page highlight)
+                setTimeout(() => {
+                    if (indicator.parentNode) {
+                        indicator.style.opacity = '0';
+                        indicator.style.transition = 'opacity 0.5s';
+                        setTimeout(() => indicator.remove(), 500);
+                    }
+                }, 5000);
+            }
+            
+            // Keep highlight persistent (don't remove after timeout)
+            // Only remove when a new section is highlighted
+        }
+        
+        // Also highlight adjacent pages if section spans multiple pages
+        if (estimatedPage > 1) {
+            const prevCanvas = pdfPages.find(p => p.pageNum === estimatedPage - 1)?.canvas;
+            if (prevCanvas) {
+                prevCanvas.style.boxShadow = `0 0 15px rgba(100, 181, 246, 0.5)`;
+                prevCanvas.style.border = `2px solid rgba(100, 181, 246, 0.5)`;
+            }
+        }
+        if (estimatedPage < pdfPages.length) {
+            const nextCanvas = pdfPages.find(p => p.pageNum === estimatedPage + 1)?.canvas;
+            if (nextCanvas) {
+                nextCanvas.style.boxShadow = `0 0 15px rgba(100, 181, 246, 0.5)`;
+                nextCanvas.style.border = `2px solid rgba(100, 181, 246, 0.5)`;
+            }
         }
     }
 }
@@ -601,7 +690,7 @@ async function startTutoringSession(documentId) {
             }
         }
         
-        // Add AI's message
+        // Add AI's message (might contain introduction + first section)
         addMessage('ai', data.message);
         
         // Display quiz if present in initial response
@@ -609,31 +698,30 @@ async function startTutoringSession(documentId) {
             displayQuizQuestion(data.quiz_question, data.quiz_options);
         }
         
-        // Generate and play TTS
+        // Ensure section highlighting is displayed
+        if (data.current_section_index !== undefined && data.current_section_title) {
+            highlightSection(
+                data.current_section_index,
+                data.current_section_title,
+                data.section_text || '',
+                data.sections ? data.sections.length : 1,
+                false
+            );
+        }
+        
+        // Play TTS audio (should be provided from backend)
         if (data.audio_url) {
+            console.log('[TUTORING] Playing audio from backend:', data.audio_url);
             playAudio(`${API_BASE_URL}${data.audio_url}`);
         } else {
-            // Generate TTS if not provided
-            try {
-                const audioBytes = await fetch(`${API_BASE_URL}/tutoring-chat`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        session_id: tutoringSessionId,
-                        message: data.message
-                    })
-                }).then(r => r.json());
-                
-                if (audioBytes.audio_url) {
-                    playAudio(`${API_BASE_URL}${audioBytes.audio_url}`);
-                }
-            } catch (err) {
-                console.error('TTS generation error:', err);
-            }
+            console.warn('[TUTORING] No audio URL provided in response');
         }
         
         status.textContent = '✅ Tutoring session started!';
         status.className = 'status success';
+        
+        // Auto-scroll to show the message
+        conversation.scrollTop = conversation.scrollHeight;
         
         // Switch to text input for tutoring
         textTab.click();
@@ -676,8 +764,20 @@ async function sendTutoringMessage(userMessage) {
             throw new Error(data.error || 'Failed to send tutoring message');
         }
         
-        // Add AI response
-        addMessage('ai', data.message);
+        // Add AI response with special styling for wrong answers
+        if (data.is_correct === false) {
+            // Wrong answer - add visual indicator
+            const errorMsg = document.createElement('div');
+            errorMsg.className = 'message ai wrong-answer';
+            errorMsg.innerHTML = `
+                <div class="wrong-answer-indicator">⚠️ Let's review this section</div>
+                <div class="message-content">${escapeHtml(data.message)}</div>
+                ${data.explanation_attempts > 0 ? `<div class="attempt-counter">Explanation attempt ${data.explanation_attempts} of 5</div>` : ''}
+            `;
+            conversation.appendChild(errorMsg);
+        } else {
+            addMessage('ai', data.message);
+        }
         
         // Update section highlight if needed
         if (data.section_index !== undefined && data.section_title) {
@@ -687,13 +787,22 @@ async function sendTutoringMessage(userMessage) {
                 data.section_index,
                 data.section_title,
                 data.section_text || '',
-                totalSections
+                totalSections,
+                data.highlight_section  // Pass highlight flag for stronger visual emphasis
             );
         }
         
         // Handle quiz questions - display them interactively
         if (data.quiz_question && data.quiz_options) {
             displayQuizQuestion(data.quiz_question, data.quiz_options);
+            hideNextSectionButton(); // Hide button when new quiz appears
+        }
+        
+        // Show "Next Section" button if available (after quiz is passed)
+        if (data.can_skip_to_next && data.state === 'quiz_complete') {
+            showNextSectionButton();
+        } else if (data.state !== 'quiz_complete') {
+            hideNextSectionButton(); // Hide if not in quiz_complete state
         }
         
         // Play audio
@@ -722,14 +831,70 @@ async function sendTutoringMessage(userMessage) {
     }
 }
 
+// Helper function to escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Show/Hide Next Section button
+function showNextSectionButton() {
+    // Remove existing button if any
+    hideNextSectionButton();
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.id = 'next-section-button-container';
+    buttonContainer.style.cssText = 'margin: 15px 0; text-align: center;';
+    
+    const nextBtn = document.createElement('button');
+    nextBtn.id = 'btn-next-section';
+    nextBtn.textContent = '➡️ Move to Next Section';
+    nextBtn.className = 'btn-next-section';
+    nextBtn.style.cssText = `
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-size: 1em;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    `;
+    
+    nextBtn.onmouseover = () => {
+        nextBtn.style.transform = 'translateY(-2px)';
+        nextBtn.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.6)';
+    };
+    nextBtn.onmouseout = () => {
+        nextBtn.style.transform = 'translateY(0)';
+        nextBtn.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
+    };
+    
+    nextBtn.onclick = () => {
+        if (tutoringSessionId) {
+            sendTutoringMessage('next section');
+        }
+    };
+    
+    buttonContainer.appendChild(nextBtn);
+    conversation.appendChild(buttonContainer);
+    
+    // Scroll to button
+    buttonContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function hideNextSectionButton() {
+    const existing = document.getElementById('next-section-button-container');
+    if (existing) {
+        existing.remove();
+    }
+}
+
 // Display quiz question in the conversation
 function displayQuizQuestion(question, options) {
-    // Escape HTML to prevent XSS
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
     
     const quizDiv = document.createElement('div');
     quizDiv.className = 'quiz-container';

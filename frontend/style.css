@@ -511,6 +511,34 @@ body {
     margin-right: auto;
 }
 
+.message.ai.wrong-answer {
+    background: rgba(244, 67, 54, 0.3);
+    border-left: 4px solid rgba(244, 67, 54, 1);
+    animation: pulse-warning 2s ease-in-out infinite;
+}
+
+.wrong-answer-indicator {
+    font-weight: 600;
+    color: #ffcdd2;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    background: rgba(244, 67, 54, 0.2);
+    border-radius: 6px;
+    border-left: 3px solid rgba(244, 67, 54, 0.8);
+}
+
+.attempt-counter {
+    font-size: 0.85em;
+    color: rgba(255, 255, 255, 0.7);
+    margin-top: 8px;
+    font-style: italic;
+}
+
+@keyframes pulse-warning {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.85; }
+}
+
 .message.error {
     background: rgba(244, 67, 54, 0.25);
     border-left: 3px solid rgba(244, 67, 54, 0.6);
@@ -806,6 +834,7 @@ audio {
     overflow-y: auto;
     padding: 10px;
     max-height: calc(80vh - 120px);
+    position: relative;
 }
 
 .pdf-page-canvas {
@@ -815,7 +844,23 @@ audio {
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 5px;
     background: white;
-    transition: box-shadow 0.3s ease;
+    transition: box-shadow 0.3s ease, border 0.3s ease;
+    position: relative;
+}
+
+.pdf-page-canvas.pdf-page-reading {
+    border: 3px solid rgba(100, 181, 246, 0.9) !important;
+    box-shadow: 0 0 25px rgba(100, 181, 246, 0.9), inset 0 0 20px rgba(100, 181, 246, 0.3) !important;
+    animation: reading-pulse 2s ease-in-out infinite;
+}
+
+@keyframes reading-pulse {
+    0%, 100% {
+        box-shadow: 0 0 25px rgba(100, 181, 246, 0.9), inset 0 0 20px rgba(100, 181, 246, 0.3);
+    }
+    50% {
+        box-shadow: 0 0 35px rgba(100, 181, 246, 1), inset 0 0 25px rgba(100, 181, 246, 0.5);
+    }
 }
 
 .section-highlight {
@@ -823,6 +868,28 @@ audio {
     background: rgba(100, 181, 246, 0.15);
     border-top: 1px solid rgba(100, 181, 246, 0.3);
     border-radius: 0 0 12px 12px;
+    transition: all 0.3s ease;
+}
+
+.section-highlight.section-needs-review {
+    background: rgba(244, 67, 54, 0.15);
+    border-top: 2px solid rgba(244, 67, 54, 0.5);
+    animation: pulse-section 2s ease-in-out infinite;
+}
+
+.section-highlight.section-needs-review #section-title-display {
+    color: rgba(244, 67, 54, 1);
+}
+
+@keyframes pulse-section {
+    0%, 100% { 
+        background: rgba(244, 67, 54, 0.15);
+        border-top-color: rgba(244, 67, 54, 0.5);
+    }
+    50% { 
+        background: rgba(244, 67, 54, 0.25);
+        border-top-color: rgba(244, 67, 54, 0.8);
+    }
 }
 
 .section-highlight-header {

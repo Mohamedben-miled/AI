@@ -230,10 +230,27 @@ class DocumentProcessor:
                 # Save previous section
                 section_text = '\n'.join(current_section_text).strip()
                 if section_text:
-                    sections.append({
-                        'title': current_section_title,
-                        'text': section_text
-                    })
+                    # Split long sections into smaller ones (max 800 chars per section)
+                    if len(section_text) > 800:
+                        # Split into smaller subsections
+                        words = section_text.split()
+                        words_per_subsection = len(words) // ((len(section_text) // 800) + 1)
+                        for i in range(0, len(words), words_per_subsection):
+                            subsection_words = words[i:i+words_per_subsection]
+                            subsection_text = ' '.join(subsection_words)
+                            if subsection_text.strip():
+                                # Count existing parts for this section
+                                existing_parts = len([s for s in sections if s.get('title', '').startswith(current_section_title)])
+                                part_num = existing_parts + 1
+                                sections.append({
+                                    'title': f"{current_section_title} (Part {part_num})",
+                                    'text': subsection_text
+                                })
+                    else:
+                        sections.append({
+                            'title': current_section_title,
+                            'text': section_text
+                        })
                 current_section_text = []
                 current_section_title = line_stripped
             elif is_heading and not current_section_title:
@@ -255,18 +272,36 @@ class DocumentProcessor:
         if current_section_title or current_section_text:
             section_text = '\n'.join(current_section_text).strip()
             if section_text:
-                sections.append({
-                    'title': current_section_title or "Final Section",
-                    'text': section_text
-                })
+                # Split long sections into smaller ones (max 800 chars per section)
+                if len(section_text) > 800:
+                    # Split into smaller subsections
+                    words = section_text.split()
+                    words_per_subsection = len(words) // ((len(section_text) // 800) + 1)
+                    for i in range(0, len(words), words_per_subsection):
+                        subsection_words = words[i:i+words_per_subsection]
+                        subsection_text = ' '.join(subsection_words)
+                        if subsection_text.strip():
+                            # Count existing parts for this section
+                            section_base = current_section_title or "Final Section"
+                            existing_parts = len([s for s in sections if s.get('title', '').startswith(section_base)])
+                            part_num = existing_parts + 1
+                            sections.append({
+                                'title': f"{section_base} (Part {part_num})",
+                                'text': subsection_text
+                            })
+                else:
+                    sections.append({
+                        'title': current_section_title or "Final Section",
+                        'text': section_text
+                    })
         
         # Fallback 1: If no sections found, try chunking-based approach
         if len(sections) == 0:
             print("[DOC_PROCESSOR] No sections identified with heading patterns, trying chunk-based approach...")
             chunks = self.chunk_text(text)
             if chunks:
-                # Group chunks into sections (4-6 chunks per section)
-                chunks_per_section = max(1, len(chunks) // 5)
+                # Group chunks into smaller sections (2-3 chunks per section for shorter sections)
+                chunks_per_section = max(1, min(3, len(chunks) // 8))  # More sections = shorter sections
                 for i in range(0, len(chunks), chunks_per_section):
                     section_chunks = chunks[i:i+chunks_per_section]
                     section_text = '\n\n'.join([c['text'] for c in section_chunks])
@@ -275,10 +310,10 @@ class DocumentProcessor:
                         'text': section_text
                     })
         
-        # Fallback 2: If still no sections, split text into equal parts
+        # Fallback 2: If still no sections, split text into smaller equal parts
         if len(sections) == 0:
             print("[DOC_PROCESSOR] No sections from chunks, splitting into equal parts...")
-            target_sections = 5
+            target_sections = 10  # More sections for shorter content
             section_length = len(text) // target_sections
             for i in range(target_sections):
                 start = i * section_length
